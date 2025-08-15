@@ -1,0 +1,18 @@
+{
+  "name": "roommate-backend",
+  "version": "1.0.0",
+  "description": "Find a Roommate backend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "Sonu Acharya",
+  "license": "MIT",
+  "dependencies": {
+    "cloudinary": "^2.7.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "nodemailer": "^6.9.13",
+    "uuid": "^9.0.1"
+  }
+}

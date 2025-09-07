@@ -9,42 +9,37 @@ const cloudinary = require("cloudinary").v2;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const BASE_URL = "http://localhost:5500"; // For manage link
+const BASE_URL = "https://api.findnearroom.com"; // VPS backend base URL
 
-// ================== ERROR HANDLING SYSTEM ==================
-process.on("uncaughtException", (err) => {
-  logDetailedError("Uncaught Exception", err);
-});
-process.on("unhandledRejection", (reason) => {
-  logDetailedError("Unhandled Rejection", reason);
-});
+// ================== ERROR HANDLING ==================
+process.on("uncaughtException", (err) => logDetailedError("Uncaught Exception", err));
+process.on("unhandledRejection", (reason) => logDetailedError("Unhandled Rejection", reason));
+
 function logDetailedError(type, err) {
   console.error(`\n===== ${type} =====`);
   if (err && err.stack) {
     const stackLines = err.stack.split("\n");
     console.error(stackLines[0]);
     const fileLine = stackLines.find(line => line.includes(".js"));
-    if (fileLine) {
-      console.error("Error Location:", fileLine.trim());
-    }
+    if (fileLine) console.error("Error Location:", fileLine.trim());
   } else {
     console.error(err);
   }
   console.error("=================================================\n");
 }
-// ===========================================================
+// ===================================================
 
-// Cloudinary config
+// Cloudinary Config
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME || "dcbysxbze",
   api_key: process.env.CLOUDINARY_API_KEY || "455511686517831",
   api_secret: process.env.CLOUDINARY_API_SECRET || "Cj7gmkaYEm4U2RpP0mtl4DW4IL0"
 });
 
-// Multer config
+// Multer setup
 const upload = multer({ dest: path.join(__dirname, "tmp_uploads/") });
 
-// ---------- Basic middlewares ----------
+// ---------- Middleware ----------
 app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true }));
@@ -53,9 +48,10 @@ app.use(express.urlencoded({ extended: true }));
 const PUBLIC_DIR = path.join(__dirname, "public");
 if (fs.existsSync(PUBLIC_DIR)) app.use(express.static(PUBLIC_DIR));
 
-// ---------- Data files ----------
+// ---------- Data Storage ----------
 const POSTS_FILE = path.join(__dirname, "posts.json");
 const CHAT_FILE = path.join(__dirname, "roommate-chats.json");
+
 function loadPosts() {
   if (!fs.existsSync(POSTS_FILE)) return [];
   try {
@@ -83,18 +79,14 @@ function saveChats(chats) {
 
 // ensure tmp_uploads exists
 const TMP_DIR = path.join(__dirname, "tmp_uploads");
-if (!fs.existsSync(TMP_DIR)) {
-  try { fs.mkdirSync(TMP_DIR); } catch (e) {}
-}
+if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR);
 
 // Upload file to Cloudinary
 async function uploadFileToCloudinary(localPath) {
   try {
     const result = await cloudinary.uploader.upload(localPath, { folder: "find_near_room" });
     fs.unlink(localPath, () => {});
-    if (!result || !result.secure_url) {
-      throw new Error("Cloudinary upload failed: no URL returned");
-    }
+    if (!result || !result.secure_url) throw new Error("Cloudinary upload failed: no URL returned");
     return result.secure_url;
   } catch (err) {
     try { fs.unlinkSync(localPath); } catch {}
@@ -102,7 +94,9 @@ async function uploadFileToCloudinary(localPath) {
   }
 }
 
-// ====== 1. POST ROOM ======
+// ================= ROUTES =================
+
+// 1. POST ROOM
 app.post("/post-room", upload.array("photos", 12), async (req, res) => {
   try {
     const {
@@ -122,18 +116,11 @@ app.post("/post-room", upload.array("photos", 12), async (req, res) => {
       }
     }
 
+    // Upload files to Cloudinary
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
-        try {
-          const url = await uploadFileToCloudinary(file.path);
-          imageLinks.push(url);
-        } catch (uploadErr) {
-          console.error("Cloudinary upload error:", uploadErr.message);
-          return res.status(500).json({
-            success: false,
-            message: `Image upload failed: ${uploadErr.message}`
-          });
-        }
+        const url = await uploadFileToCloudinary(file.path);
+        imageLinks.push(url);
       }
     }
 
@@ -166,21 +153,30 @@ app.post("/post-room", upload.array("photos", 12), async (req, res) => {
   }
 });
 
-// ====== Other Routes ======
+// 2. GET Room posts
 app.get("/room-posts", (req, res) => {
-  res.json(loadPosts().filter((p) => p.type === "room"));
+  res.json(loadPosts().filter((p) => p.type === "room" && !p.hidden));
 });
+
+// 3. Roommate Post
 app.post("/roommate-post", (req, res) => {
   const { name, gender, phone, email, message } = req.body;
-  const newPost = { id: uuidv4(), name, gender, phone, email, message, replies: [], type: "roommate", timestamp: new Date().toISOString() };
+  const newPost = { 
+    id: uuidv4(), name, gender, phone, email, message, 
+    replies: [], type: "roommate", timestamp: new Date().toISOString() 
+  };
   const posts = loadPosts();
   posts.push(newPost);
   savePosts(posts);
   res.json({ success: true, id: newPost.id });
 });
+
+// 4. Get Roommate posts
 app.get("/roommate-posts", (req, res) => {
-  res.json(loadPosts().filter((p) => p.type === "roommate"));
+  res.json(loadPosts().filter((p) => p.type === "roommate" && !p.hidden));
 });
+
+// 5. Roommate reply
 app.post("/roommate-reply", (req, res) => {
   const { postId, senderName, senderEmail, replyMessage } = req.body;
   const posts = loadPosts();
@@ -190,6 +186,8 @@ app.post("/roommate-reply", (req, res) => {
   savePosts(posts);
   res.json({ success: true });
 });
+
+// 6. Delete Roommate Post
 app.delete("/roommate-delete/:id", (req, res) => {
   const { id } = req.params;
   let posts = loadPosts();
@@ -198,6 +196,8 @@ app.delete("/roommate-delete/:id", (req, res) => {
   savePosts(posts);
   res.json({ success: posts.length < before });
 });
+
+// 7. Private Reply (chat)
 app.post("/private-reply", (req, res) => {
   const { postId, senderName, senderEmail, message } = req.body;
   const chats = loadChats();
@@ -209,6 +209,8 @@ app.post("/private-reply", (req, res) => {
 app.get("/private-reply/:postId", (req, res) => {
   res.json(loadChats()[req.params.postId] || []);
 });
+
+// 8. Edit Roommate Post
 app.patch("/roommate-post/:id", (req, res) => {
   const { id } = req.params;
   const { message } = req.body;
@@ -220,6 +222,8 @@ app.patch("/roommate-post/:id", (req, res) => {
   savePosts(posts);
   res.send({ success: true });
 });
+
+// 9. Admin Login
 app.post("/admin-login", (req, res) => {
   const { username, password } = req.body;
   if (username === "findnearroom" && password === "radheradhe@207") {
@@ -228,9 +232,13 @@ app.post("/admin-login", (req, res) => {
     res.status(401).send("Invalid credentials");
   }
 });
+
+// 10. Admin Data
 app.get("/admin-data", (req, res) => {
   res.json(loadPosts().filter((p) => p.type === "room"));
 });
+
+// 11. Delete Room
 app.delete("/delete-room/:index", (req, res) => {
   const { index } = req.params;
   let posts = loadPosts();
@@ -241,6 +249,8 @@ app.delete("/delete-room/:index", (req, res) => {
   savePosts(posts);
   res.sendStatus(200);
 });
+
+// 12. Edit Room
 app.patch("/edit-room/:index", (req, res) => {
   const index = parseInt(req.params.index);
   const updated = req.body;
@@ -259,7 +269,7 @@ app.patch("/edit-room/:index", (req, res) => {
   res.json({ success: true, message: "Room updated" });
 });
 
-// ====== NEW: Hide/Unhide & Edit Roommate ======
+// 13. Hide/Unhide Rooms
 app.patch("/room-hide/:index", (req, res) => {
   const index = parseInt(req.params.index);
   const { hidden } = req.body;
@@ -278,6 +288,7 @@ app.patch("/room-hide/:index", (req, res) => {
   res.json({ success: true, hidden: posts[realIndex].hidden });
 });
 
+// 14. Hide/Unhide Roommate
 app.patch("/roommate-hide/:id", (req, res) => {
   const { id } = req.params;
   const { hidden } = req.body;
@@ -291,6 +302,7 @@ app.patch("/roommate-hide/:id", (req, res) => {
   res.json({ success: true, hidden: posts[idx].hidden });
 });
 
+// 15. Edit Roommate (full)
 app.patch("/roommate-edit/:id", (req, res) => {
   const { id } = req.params;
   const updated = req.body;
@@ -304,10 +316,12 @@ app.patch("/roommate-edit/:id", (req, res) => {
   res.json({ success: true });
 });
 
-// ====== Root ======
+// Root Route
 app.get("/", (req, res) => {
-  res.send("✅ Find Near Room backend is live (email sending removed).");
+  res.send("✅ Find Near Room backend is live.");
 });
+
+// Start Server
 app.listen(PORT, () => {
-  console.log(`Backend running at http://localhost:${PORT}`);
+  console.log(`✅ Backend running at ${BASE_URL}`);
 });
